@@ -209,7 +209,12 @@ def harvest_bytes(name, data, emit, depth=0):
         harvest_pdf(data, emit)
     if name.endswith("Document.xml") or name.endswith(".model") or name.endswith("GuiDocument.xml"):
         harvest_xml_meta(data, emit, ext)
-    harvest_free(data, emit)
+    if ext == ".stl" and data[:5].lower() != b"solid":
+        harvest_free(data[:80], emit)
+    elif len(data) > 64_000_000:
+        harvest_free(data[:8_000_000], emit); harvest_free(data[-8_000_000:], emit)
+    else:
+        harvest_free(data, emit)
 
 
 def emit_path(path, emit):

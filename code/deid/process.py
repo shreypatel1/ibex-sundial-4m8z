@@ -24,6 +24,41 @@ from .identities import is_generic
 OLE_SIG = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
+from .harvest import EMAIL, USERPATH, USERPATH16
+from .identities import good_email
+
+_GEN_USERS = {"public", "default", "all users", "administrator", "admin", "user", "temp", "default user", "guest"}
+
+
+def _sub_userpaths(data):
+    def u8(m):
+        name = m.group(1)
+        if name.decode("latin-1").lower() in _GEN_USERS:
+            return m.group(0)
+        return m.group(0)[:m.start(1) - m.start(0)] + pseudo_utf8(name)
+    def u16(m):
+        name = m.group(1)
+        s = name.decode("utf-16-le", "ignore")
+        if s.lower() in _GEN_USERS:
+            return m.group(0)
+        from .pseudo import pseudo_utf16
+        return m.group(0)[:m.start(1) - m.start(0)] + pseudo_utf16(name)
+    def em(m):
+        e = m.group(0)
+        try:
+            es = e.decode("ascii")
+        except Exception:
+            return e
+        return pseudo_utf8(e) if good_email(es) else e
+    if any(k in data for k in (b"Users", b"users", b"USERS", b"/home/", b"Settings", b"settings")):
+        data = USERPATH.sub(u8, data)
+    if any(k in data for k in (b"s\x00e\x00r\x00s\x00", b"S\x00E\x00R\x00S\x00")):
+        data = USERPATH16.sub(u16, data)
+    if b"@" in data:
+        data = EMAIL.sub(em, data)
+    return data
+
+
 class Ctx:
     def __init__(self, ids):
         self.R = Replacer(ids["global"])
@@ -31,6 +66,15 @@ class Ctx:
         self.fields = set(x.lower() for x in ids["fields"])
         self.owners = set(ids.get("owners", []))
         self.log = []
+        _R = self.R
+        class _Both:
+            def sub(_, data):
+                return _sub_userpaths(_R.sub(data))
+            def sub_str(_, s):
+                return _R.sub_str(s)
+            def find(_, d):
+                return _R.find(d)
+        self.R = _Both()
 
     # ---------- paths ----------
     def map_segment(self, seg):
@@ -234,10 +278,8 @@ class Ctx:
                 try:
                     content = zin.read(zi)
                 except Exception as e:
-                    self.log.append(f"zip member unreadable {zi.filename}: {e}")
-                    content = None
-                if content is None:
-                    continue
+                    self.log.append(f"zip kept as-is (member unreadable {zi.filename}: {e})")
+                    return data
                 newc = content if zi.is_dir() else self.process(zi.filename, content, depth + 1)
                 ni = zipfile.ZipInfo(newname, date_time=zi.date_time)
                 ni.compress_type = zi.compress_type if zi.compress_type in (0, 8, 12, 14) else 8
@@ -343,14 +385,41 @@ class Ctx:
                 except Exception as e:
                     self.log.append(f"pdf obj: {e}")
             if not changed:
-                return data
+                return self.R.sub(data)
             bio = io.BytesIO()
             pdf.save(bio, compress_streams=True, object_stream_mode=pikepdf.ObjectStreamMode.preserve)
-            return bio.getvalue()
+            return self.R.sub(bio.getvalue())
 
-    def _pdf_dict_strings(self, d, pikepdf):
+    def _pdf_nested(self, v, pikepdf, depth=0):
+        changed = False
+        if depth > 6:
+            return False
+        if isinstance(v, pikepdf.Array):
+            for i in range(len(v)):
+                x = v[i]
+                if isinstance(x, pikepdf.String):
+                    try:
+                        s = str(x)
+                    except Exception:
+                        continue
+                    ns = self.R.sub_str(s)
+                    if ns != s:
+                        v[i] = pikepdf.String(ns); changed = True
+                elif isinstance(x, (pikepdf.Dictionary, pikepdf.Array)) and not x.is_indirect:
+                    changed |= self._pdf_nested(x, pikepdf, depth + 1)
+        elif isinstance(v, pikepdf.Dictionary):
+            changed |= self._pdf_dict_strings(v, pikepdf, depth + 1)
+        return changed
+
+    def _pdf_dict_strings(self, d, pikepdf, depth=0):
         changed = False
         for k in list(d.keys()):
+            try:
+                vv = d[k]
+            except Exception:
+                continue
+            if isinstance(vv, (pikepdf.Dictionary, pikepdf.Array)) and not vv.is_indirect and depth < 6:
+                changed |= self._pdf_nested(vv, pikepdf, depth)
             try:
                 v = d[k]
             except Exception:

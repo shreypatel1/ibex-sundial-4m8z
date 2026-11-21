@@ -1,0 +1,4 @@
+olefile==0.47
+pikepdf==10.18.2
+pyahocorasick==2.3.1
+wordfreq==3.1.1

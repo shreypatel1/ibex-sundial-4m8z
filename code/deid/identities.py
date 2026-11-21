@@ -39,7 +39,7 @@ GENERIC = {
 }
 GENERIC_RE = re.compile(r"^(?:nauo-(?:org|per)\d+|person_\w+|\w+_(?:first|last)name|[\d\W_]+|.{0,1}|"
                         r"desktop-[a-z0-9]{5,8}|laptop-[a-z0-9]{5,8}|win-[a-z0-9]{6,12}|user\d*|admin\d*|"
-                        r"pc\d*|.*@(?:\d|ugs)\..*|[a-z]:.*)$", re.I)
+                        r"pc\d*|.*@(?:\d|ugs)\..*|[a-z]:.*|[a-z]{1,2}\d+(?:x\d*)?|\d+[a-z]{1,3}\d*)$", re.I)
 
 # Organisations, people and projects named in catalog/web folder titles (curated by hand
 # from the manifest; these are the identifying parts of those folder names).
