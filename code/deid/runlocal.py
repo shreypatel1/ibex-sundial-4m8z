@@ -31,11 +31,40 @@ def main(idsfile, src_root, out_root, rels, procs=4, report=None):
     items.sort(key=lambda x: -os.path.getsize(os.path.join(x[0], x[1])))
     rep = open(report, "a", encoding="utf-8") if report else None
     n = 0
-    with mp.Pool(procs, initializer=init, initargs=(idsfile,), maxtasksperchild=200) as pool:
-        for rel, newrel, size, changed, log, dt in pool.imap_unordered(work, items, chunksize=1):
-            n += 1
-            if rep:
-                rep.write(json.dumps({"src": rel, "dst": newrel, "size": size, "changed": changed, "log": log, "t": round(dt, 2)}, ensure_ascii=False) + "\n")
+    from concurrent.futures import ProcessPoolExecutor
+    big = [it for it in items if os.path.getsize(os.path.join(it[0], it[1])) > 250_000_000]
+    small = [it for it in items if it not in big]
+    def emit(res):
+        nonlocal n
+        rel, newrel, size, changed, log, dt = res
+        n += 1
+        if rep:
+            rep.write(json.dumps({"src": rel, "dst": newrel, "size": size, "changed": changed, "log": log, "t": round(dt, 2)}, ensure_ascii=False) + "\n")
+    for group, np_ in ((big, 1), (small, procs)):
+        todo = list(group)
+        for attempt in range(3):
+            if not todo:
+                break
+            failed = []
+            try:
+                with ProcessPoolExecutor(np_, initializer=init, initargs=(idsfile,)) as ex:
+                    futs = {ex.submit(work, it): it for it in todo}
+                    for f, it in futs.items():
+                        try:
+                            emit(f.result())
+                        except Exception as e:
+                            failed.append(it)
+            except Exception:
+                pass
+            todo = [it for it in failed]
+            np_ = 1
+        for it in todo:  # could not process: copy raw so nothing is dropped
+            src = os.path.join(it[0], it[1])
+            init(idsfile)
+            dst = os.path.join(it[2], CTX.map_path(it[1]))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            import shutil; shutil.copyfile(src, dst)
+            emit((it[1], CTX.map_path(it[1]), os.path.getsize(src), False, ["copied raw after worker failure"], 0))
     if rep:
         rep.close()
     return n
