@@ -228,11 +228,12 @@ class Ctx:
                 v = getattr(m, a)
                 if v:
                     v = (v.decode("cp1252", "replace") if isinstance(v, bytes) else str(v)).split("\x00")[0].strip()
-                    if v and not is_generic(v):
+                    if v and len(v) >= 2 and re.search(r"[^\W\d_]", v):
                         vals.add(v)
             if vals:
-                buf = bytearray(out)
                 local = Replacer(list(vals))
+                out = local.sub(out)  # every stream: saved-account residue (same length, offsets kept)
+                buf = bytearray(out)
                 for st in ("\x05SummaryInformation", "\x05DocumentSummaryInformation"):
                     if not o.exists(st):
                         continue
@@ -326,6 +327,13 @@ class Ctx:
     def pdf(self, data, depth):
         import pikepdf
         try:
+            from .pdftext import redact_pdf
+            red = redact_pdf(data, self.R, self.log)
+            if red is not None:
+                data = red
+        except Exception as e:
+            self.log.append(f"pdf text: {e}")
+        try:
             pdf = pikepdf.open(io.BytesIO(data))
         except Exception as e:
             self.log.append(f"pdf unreadable, raw replace: {e}")
@@ -341,7 +349,9 @@ class Ctx:
                         if isinstance(v, pikepdf.String):
                             s = str(v)
                             if k in ("/Author", "/Company", "/Manager", "/LastModifiedBy", "/Owner"):
-                                ns = self.field_value(self.R.sub_str(s)) if self.R.sub_str(s) == s else self.R.sub_str(s)
+                                ns = self.R.sub_str(s)
+                                if ns == s and s.strip() and re.search(r"[^\W\d_]", s) and s.strip().lower() not in ("anonymous", "unknown", "(unspecified)", "unspecified", "none", "n/a"):
+                                    ns = pseudo_str(s)
                             else:
                                 ns = self.R.sub_str(s)
                             if ns != s:

@@ -200,6 +200,19 @@ def build(harvest_files, manifest=None):
     for c in CURATED_PATHS:
         paths.add(c)
     glob = {g for g in glob if len(g) >= 3 and not is_generic(g)}
+    try:
+        import gender_guesser.detector as _gd
+        first = {k.lower() for k in _gd.Detector(case_sensitive=False).names.keys()}
+    except Exception:
+        first = set()
+    moved = set()
+    for g in glob:
+        if re.fullmatch(r"[^\W\d_]+", g):
+            z = zipf_frequency(g.lower(), "en")
+            if z >= 4.0 or (z >= 3.0 and g.lower() not in first):
+                moved.add(g)
+    glob -= moved
+    fields |= moved
     fields -= glob
     paths -= glob
     return sorted(glob), sorted(fields), sorted(paths), kinds
